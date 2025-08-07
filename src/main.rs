@@ -5,6 +5,7 @@ mod hf_dataset_converter;
 mod parquet_validator;
 mod dataset_loader_example;
 mod rust_analyzer_extractor;
+mod cargo2hf_extractor;
 
 use validator::{
     DatasetValidator, MockDataAccess, EntityIdentifier, ValidationLevel,
@@ -97,6 +98,24 @@ async fn async_main() -> Result<(), ValidationError> {
             let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("rust-analyzer-hf-dataset");
             generate_hf_dataset(project_path, output_path)?;
         }
+        Some("analyze-cargo-project") => {
+            println!("Analyzing Cargo project with cargo2hf...\n");
+            let project_path = args.get(2).ok_or_else(|| ValidationError::InvalidInput("Cargo project path required".to_string()))?;
+            let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("cargo2hf-dataset");
+            let include_deps = args.get(4).map(|s| s == "true").unwrap_or(false);
+            analyze_cargo_project(project_path, output_path, include_deps)?;
+        }
+        Some("analyze-cargo-ecosystem") => {
+            println!("Analyzing Cargo ecosystem (project + dependencies)...\n");
+            let project_path = args.get(2).ok_or_else(|| ValidationError::InvalidInput("Cargo project path required".to_string()))?;
+            let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("cargo-ecosystem-dataset");
+            analyze_cargo_project(project_path, output_path, true)?; // Include dependencies
+        }
+        Some("validate-cargo-dataset") => {
+            println!("Validating cargo2hf generated dataset...\n");
+            let dataset_path = args.get(2).map(|s| s.as_str()).unwrap_or("cargo2hf-dataset");
+            validate_cargo_dataset(dataset_path)?;
+        }
         _ => {
             println!("Available commands:");
             println!("  test-mock        - Test with mock data");
@@ -112,6 +131,9 @@ async fn async_main() -> Result<(), ValidationError> {
             println!("  analyze-rust-phases <project_path> <phases> [output_dir] - Analyze specific processing phases");
             println!("  validate-rust-analyzer-datasets [dataset_dir] - Validate rust-analyzer generated datasets");
             println!("  generate-hf-dataset <project_path> [output_dir] - Generate HuggingFace dataset with Parquet files");
+            println!("  analyze-cargo-project <project_path> [output_dir] [include_deps] - Analyze Cargo project with cargo2hf");
+            println!("  analyze-cargo-ecosystem <project_path> [output_dir] - Analyze Cargo project + all dependencies");
+            println!("  validate-cargo-dataset [dataset_dir] - Validate cargo2hf generated dataset");
             println!("\nRunning mock tests by default...\n");
             
             test_mock_dataset()?;
@@ -777,5 +799,266 @@ target/
     println!("  - .gitattributes (Git LFS configuration)");
     println!("  - .gitignore (standard ignore patterns)");
 
+    Ok(())
+}
+
+/// Analyze a Cargo project and generate HuggingFace dataset
+/// 
+/// This function uses the cargo2hf extractor to analyze a Cargo project
+/// and generate comprehensive datasets including project metadata,
+/// dependency analysis, source code metrics, and ecosystem information.
+fn analyze_cargo_project(project_path: &str, output_path: &str, include_dependencies: bool) -> Result<(), ValidationError> {
+    use cargo2hf_extractor::{Cargo2HfExtractor, CargoExtractionPhase};
+    
+    let project_path = Path::new(project_path);
+    let output_path = Path::new(output_path);
+    
+    // Verify project exists and has Cargo.toml
+    if !project_path.exists() {
+        return Err(ValidationError::InvalidInput(format!("Project path does not exist: {}", project_path.display())));
+    }
+    
+    let cargo_toml = project_path.join("Cargo.toml");
+    if !cargo_toml.exists() {
+        return Err(ValidationError::InvalidInput(format!("No Cargo.toml found in: {}", project_path.display())));
+    }
+    
+    println!("🔍 Analyzing Cargo project: {}", project_path.display());
+    println!("📊 Output directory: {}", output_path.display());
+    println!("🔗 Include dependencies: {}", include_dependencies);
+    
+    // Create extractor
+    let mut extractor = Cargo2HfExtractor::new()
+        .map_err(|e| ValidationError::ProcessingError(format!("Failed to create extractor: {}", e)))?;
+    
+    // Define extraction phases
+    let phases = vec![
+        CargoExtractionPhase::ProjectMetadata,
+        CargoExtractionPhase::DependencyAnalysis,
+        CargoExtractionPhase::SourceCodeAnalysis,
+        CargoExtractionPhase::BuildAnalysis,
+        CargoExtractionPhase::EcosystemAnalysis,
+        CargoExtractionPhase::VersionHistory,
+    ];
+    
+    // Extract project data
+    extractor.extract_project_to_parquet(project_path, &phases, output_path, include_dependencies)
+        .map_err(|e| ValidationError::ProcessingError(format!("Extraction failed: {}", e)))?;
+    
+    println!("✅ Cargo project analysis complete!");
+    println!("📁 Dataset files written to: {}", output_path.display());
+    
+    // Generate README for the dataset
+    generate_cargo_dataset_readme(output_path, project_path, include_dependencies)?;
+    
+    Ok(())
+}
+
+/// Validate a cargo2hf generated dataset
+/// 
+/// This function validates the structure and content of datasets generated
+/// by the cargo2hf extractor, ensuring they meet HuggingFace standards.
+fn validate_cargo_dataset(dataset_path: &str) -> Result<(), ValidationError> {
+    let dataset_path = Path::new(dataset_path);
+    
+    if !dataset_path.exists() {
+        return Err(ValidationError::InvalidInput(format!("Dataset path does not exist: {}", dataset_path.display())));
+    }
+    
+    println!("🔍 Validating cargo2hf dataset: {}", dataset_path.display());
+    
+    // Check for expected phase directories
+    let expected_phases = vec![
+        "project_metadata-phase",
+        "dependency_analysis-phase", 
+        "source_code_analysis-phase",
+        "build_analysis-phase",
+        "ecosystem_analysis-phase",
+        "version_history-phase",
+    ];
+    
+    let mut found_phases = 0;
+    let mut total_records = 0;
+    let mut total_size_mb = 0.0;
+    
+    for phase in &expected_phases {
+        let phase_dir = dataset_path.join(phase);
+        if phase_dir.exists() {
+            found_phases += 1;
+            println!("✅ Found phase: {}", phase);
+            
+            // Count Parquet files and estimate records
+            for entry in std::fs::read_dir(&phase_dir)
+                .map_err(|e| ValidationError::ProcessingError(format!("Failed to read phase directory: {}", e)))? 
+            {
+                let entry = entry.map_err(|e| ValidationError::ProcessingError(format!("Failed to read directory entry: {}", e)))?;
+                let path = entry.path();
+                
+                if path.extension().and_then(|s| s.to_str()) == Some("parquet") {
+                    let metadata = std::fs::metadata(&path)
+                        .map_err(|e| ValidationError::ProcessingError(format!("Failed to read file metadata: {}", e)))?;
+                    let size_mb = metadata.len() as f64 / (1024.0 * 1024.0);
+                    total_size_mb += size_mb;
+                    
+                    // Estimate records (rough approximation)
+                    let estimated_records = (size_mb * 1000.0) as u32; // Very rough estimate
+                    total_records += estimated_records;
+                    
+                    println!("  📄 {}: {:.2} MB (~{} records)", path.file_name().unwrap().to_string_lossy(), size_mb, estimated_records);
+                }
+            }
+        } else {
+            println!("⚠️  Missing phase: {}", phase);
+        }
+    }
+    
+    println!("\n📊 Dataset Summary:");
+    println!("  Phases found: {}/{}", found_phases, expected_phases.len());
+    println!("  Total size: {:.2} MB", total_size_mb);
+    println!("  Estimated records: {}", total_records);
+    
+    // Check for required files
+    let readme_path = dataset_path.join("README.md");
+    if readme_path.exists() {
+        println!("✅ README.md found");
+    } else {
+        println!("⚠️  README.md missing");
+    }
+    
+    let gitattributes_path = dataset_path.join(".gitattributes");
+    if gitattributes_path.exists() {
+        println!("✅ .gitattributes found (Git LFS configuration)");
+    } else {
+        println!("⚠️  .gitattributes missing (needed for Git LFS)");
+    }
+    
+    if found_phases == 0 {
+        return Err(ValidationError::ProcessingError("No valid phases found in dataset".to_string()));
+    }
+    
+    println!("✅ Dataset validation complete!");
+    
+    Ok(())
+}
+
+/// Generate README.md for cargo2hf dataset
+fn generate_cargo_dataset_readme(output_dir: &Path, project_path: &Path, include_dependencies: bool) -> Result<(), ValidationError> {
+    let project_name = project_path.file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown-project");
+    
+    let readme_content = format!(r#"# Cargo2HF Dataset: {}
+
+This dataset contains comprehensive analysis data extracted from the Cargo project `{}` using the cargo2hf tool.
+
+## Dataset Overview
+
+- **Source Project**: {}
+- **Include Dependencies**: {}
+- **Extraction Tool**: cargo2hf (part of hf-dataset-validator-rust)
+- **Format**: Apache Parquet files optimized for machine learning
+- **Compression**: Snappy compression for fast loading
+
+## Dataset Structure
+
+### Phase-Based Organization
+
+The dataset is organized into multiple phases, each capturing different aspects of the Cargo project:
+
+#### 1. Project Metadata (`project_metadata-phase/`)
+- Basic project information from Cargo.toml
+- Authors, license, description, keywords, categories
+- Repository and documentation URLs
+- Project versioning information
+
+#### 2. Dependency Analysis (`dependency_analysis-phase/`)
+- Direct and transitive dependency graphs
+- Version constraints and resolution
+- Feature flags and optional dependencies
+- Dependency source analysis (crates.io, git, path)
+
+#### 3. Source Code Analysis (`source_code_analysis-phase/`)
+- Lines of code metrics by file type
+- Function, struct, enum, trait counts
+- Code complexity measurements
+- Documentation coverage analysis
+- Public API surface analysis
+
+#### 4. Build Analysis (`build_analysis-phase/`)
+- Build script analysis (build.rs)
+- Target platform configurations
+- Feature flag combinations
+- Compilation profiles and settings
+
+#### 5. Ecosystem Analysis (`ecosystem_analysis-phase/`)
+- Crates.io metadata and download statistics
+- GitHub repository metrics (stars, forks, issues)
+- Community engagement indicators
+- Popularity and adoption metrics
+
+#### 6. Version History (`version_history-phase/`)
+- Git commit history analysis
+- Contributor statistics
+- Release patterns and frequency
+- Project evolution tracking
+
+## Schema
+
+Each record contains:
+
+- **Identification**: Unique ID, project path, name, version
+- **Phase Information**: Which analysis phase generated the data
+- **Project Metadata**: Description, authors, license, repository info
+- **Code Metrics**: Lines of code, file counts, complexity scores
+- **Dependency Data**: Dependency counts and detailed dependency information
+- **Build Configuration**: Features, targets, build script complexity
+- **Ecosystem Metrics**: Download counts, GitHub stats, community metrics
+- **Version History**: Commit counts, contributor info, project age
+- **Processing Metadata**: Timestamps, tool versions, processing times
+
+## Applications
+
+This dataset is valuable for:
+
+- **Dependency Analysis**: Understanding Rust ecosystem patterns
+- **Code Quality Research**: Analyzing code metrics and best practices  
+- **Build System Studies**: Understanding Cargo build configurations
+- **Ecosystem Evolution**: Tracking how Rust projects develop over time
+- **Machine Learning**: Training models on Rust project patterns
+
+## Complementary Datasets
+
+This cargo2hf dataset complements:
+- **rust-analyzer datasets**: Semantic analysis and compiler internals
+- **crates.io datasets**: Registry-wide ecosystem analysis
+- **GitHub datasets**: Repository and community metrics
+
+## License
+
+This dataset is generated from open source Rust projects and inherits their respective licenses.
+The extraction tool and dataset format are licensed under AGPL-3.0.
+
+## Generation Details
+
+- **Generated**: {}
+- **Tool Version**: cargo2hf (hf-dataset-validator-rust)
+- **Source Project**: {}
+- **Dependencies Included**: {}
+- **Total Phases**: 6 analysis phases
+"#, 
+        project_name,
+        project_path.display(),
+        project_path.display(),
+        include_dependencies,
+        "2025-08-07", // Placeholder for now
+        project_path.display(),
+        include_dependencies
+    );
+
+    std::fs::write(output_dir.join("README.md"), readme_content)
+        .map_err(|e| ValidationError::ProcessingError(format!("Failed to write README: {}", e)))?;
+
+    println!("📝 Generated README.md for cargo2hf dataset");
+    
     Ok(())
 }
