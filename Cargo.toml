@@ -1,0 +1,40 @@
+[package]
+name = "hf-dataset-validator"
+version = "0.1.0"
+edition = "2021"
+authors = ["j mike dupont <h4@solfunmeme.com>"]
+description = "A unified Rust library for validating and converting Hugging Face datasets with Parquet support - part of the solfunmeme project"
+license = "AGPL-3.0"
+repository = "https://github.com/solfunmeme/hf-dataset-validator-rust"
+homepage = "https://github.com/solfunmeme/hf-dataset-validator-rust"
+documentation = "https://docs.rs/hf-dataset-validator"
+keywords = ["huggingface", "dataset", "validation", "parquet", "solfunmeme"]
+categories = ["data-structures", "science", "command-line-utilities"]
+readme = "README.md"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+rand = "0.8"
+arrow = "53.0"
+parquet = "53.0"
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4"] }
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bin]]
+name = "hf-validator"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+
+[profile.dev]
+opt-level = 0
+debug = true
