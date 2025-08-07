@@ -8,7 +8,8 @@
 ```
 hf-dataset-validator-rust/
 ├── src/
-│   ├── rust_analyzer_extractor.rs    # Main extractor with comprehensive docs
+│   ├── rust_analyzer_extractor.rs    # Rust-analyzer semantic analysis extractor
+│   ├── cargo2hf_extractor.rs         # Cargo project analysis extractor  
 │   ├── main.rs                       # CLI interface
 │   ├── hf_dataset_converter.rs       # HuggingFace dataset conversion
 │   ├── parquet_validator.rs          # Parquet file validation
@@ -58,6 +59,12 @@ rust-analyser-hf-dataset/
 - **Real-world applications** and use case descriptions
 - **Technical architecture** and design decisions
 
+### ✅ Dual Analysis Approach
+- **rust-analyzer extractor**: Semantic analysis and compiler internals
+- **cargo2hf extractor**: Project metadata, dependencies, ecosystem data
+- **Complementary datasets**: Complete view of Rust projects for ML training
+- **Multi-phase extraction**: 9 rust-analyzer phases + 6 cargo2hf phases
+
 ### ✅ Production-Ready Dataset
 - **532,821 semantic analysis records** from rust-analyzer codebase
 - **Git LFS optimized** with automatic file splitting under 10MB
@@ -66,18 +73,31 @@ rust-analyser-hf-dataset/
 
 ## Usage
 
-### Generate New Datasets
+### Generate Rust-Analyzer Datasets
 ```bash
 cd ~/2025/08/07/hf-dataset-validator-rust
-cargo run --bin main -- extract-rust-analyzer /path/to/rust/codebase /path/to/output
+cargo run --bin hf-validator -- analyze-rust-project /path/to/rust/codebase /path/to/output
+```
+
+### Generate Cargo Project Datasets
+```bash
+# Analyze single project
+cargo run --bin hf-validator -- analyze-cargo-project /path/to/cargo/project /path/to/output
+
+# Analyze project + all dependencies  
+cargo run --bin hf-validator -- analyze-cargo-ecosystem /path/to/cargo/project /path/to/output
 ```
 
 ### Direct Parquet Generation
 The tool generates Parquet files directly - no conversion step needed!
 
-### Validate Dataset
+### Validate Datasets
 ```bash
-cargo run --bin main -- validate-parquet /path/to/dataset/
+# Validate rust-analyzer datasets
+cargo run --bin hf-validator -- validate-rust-analyzer-datasets /path/to/dataset/
+
+# Validate cargo2hf datasets
+cargo run --bin hf-validator -- validate-cargo-dataset /path/to/dataset/
 ```
 
 ## Repository Status
