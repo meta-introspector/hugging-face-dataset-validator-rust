@@ -181,6 +181,12 @@ pub enum ValidationError {
 
     #[error("Network error: {message}")]
     NetworkError { message: String },
+
+    #[error("Invalid input: {0}")]
+    InvalidInput(String),
+
+    #[error("Processing error: {0}")]
+    ProcessingError(String),
 }
 
 impl From<serde_json::Error> for ValidationError {

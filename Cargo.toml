@@ -21,6 +21,13 @@ arrow = "53.0"
 parquet = "53.0"
 tokio = { version = "1.0", features = ["full"] }
 uuid = { version = "1.0", features = ["v4"] }
+anyhow = "1.0"
+tempfile = "3.0"
+
+# Note: In a real implementation, we would add rust-analyzer dependencies like:
+# ra-ide = { git = "https://github.com/rust-lang/rust-analyzer", rev = "..." }
+# ra-syntax = { git = "https://github.com/rust-lang/rust-analyzer", rev = "..." }
+# ra-hir = { git = "https://github.com/rust-lang/rust-analyzer", rev = "..." }
 
 [dev-dependencies]
 criterion = "0.5"
