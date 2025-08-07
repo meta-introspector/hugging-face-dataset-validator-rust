@@ -18,7 +18,7 @@ hf-dataset-validator-rust/
 │   └── solfunmeme_validator.rs       # Specialized validator
 ├── Cargo.toml                        # Rust project configuration
 ├── Cargo.lock                        # Dependency lock file
-├── convert_to_parquet.py             # Python conversion utility
+
 ├── README.md                         # Tool documentation
 ├── PROJECT_SUMMARY.md                # Technical summary
 ├── RUST_ANALYZER_HF_DATASET_STATUS.md # Project completion status
@@ -72,10 +72,8 @@ cd ~/2025/08/07/hf-dataset-validator-rust
 cargo run --bin main -- extract-rust-analyzer /path/to/rust/codebase /path/to/output
 ```
 
-### Convert to HuggingFace Format
-```bash
-python convert_to_parquet.py input.json output_dir/
-```
+### Direct Parquet Generation
+The tool generates Parquet files directly - no conversion step needed!
 
 ### Validate Dataset
 ```bash
