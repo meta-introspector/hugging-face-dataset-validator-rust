@@ -384,6 +384,8 @@ impl Cargo2HfExtractor {
     /// This phase analyzes the Cargo.toml file to extract fundamental project
     /// information including name, version, description, authors, license,
     /// and other metadata fields that describe the project.
+    /// 
+    /// Handles both regular packages and workspace configurations.
     fn extract_project_metadata(&mut self, project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
         let cargo_toml_path = project_path.join("Cargo.toml");
         let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
@@ -393,9 +395,91 @@ impl Cargo2HfExtractor {
         let cargo_toml: toml::Value = toml::from_str(&cargo_toml_content)
             .with_context(|| "Failed to parse Cargo.toml")?;
         
-        let package = cargo_toml.get("package")
-            .ok_or_else(|| anyhow::anyhow!("No [package] section in Cargo.toml"))?;
+        // Check if this is a workspace or a package
+        if let Some(workspace) = cargo_toml.get("workspace") {
+            // Handle workspace Cargo.toml
+            self.extract_workspace_metadata(project_path, workspace)
+        } else if let Some(package) = cargo_toml.get("package") {
+            // Handle regular package Cargo.toml
+            self.extract_package_metadata(project_path, package)
+        } else {
+            Err(anyhow::anyhow!("No [package] or [workspace] section in Cargo.toml"))
+        }
+    }
+    
+    /// Extract metadata from a workspace Cargo.toml
+    fn extract_workspace_metadata(&mut self, project_path: &Path, workspace: &toml::Value) -> Result<Vec<CargoProjectRecord>> {
+        // For workspace, we'll create a record representing the workspace itself
+        let project_name = project_path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown-workspace")
+            .to_string();
         
+        // Extract workspace members
+        let members = workspace.get("members")
+            .and_then(|v| v.as_array())
+            .map(|arr| serde_json::to_string(arr).unwrap_or_default());
+        
+        let record = CargoProjectRecord {
+            id: format!("{}:workspace:project_metadata", project_name),
+            project_path: project_path.to_string_lossy().to_string(),
+            project_name: project_name.clone(),
+            project_version: "workspace".to_string(),
+            phase: CargoExtractionPhase::ProjectMetadata.as_str().to_string(),
+            processing_order: self.next_processing_order(),
+            
+            // Workspace-specific metadata
+            description: Some(format!("Cargo workspace with {} members", 
+                workspace.get("members")
+                    .and_then(|v| v.as_array())
+                    .map(|arr| arr.len())
+                    .unwrap_or(0))),
+            authors: None, // Workspaces typically don't have authors
+            license: None, // Workspaces typically don't have licenses
+            repository: None,
+            homepage: None,
+            documentation: None,
+            keywords: members.clone(), // Store members in keywords field for now
+            categories: None,
+            
+            // Initialize other fields with defaults
+            lines_of_code: 0,
+            source_file_count: 0,
+            test_file_count: 0,
+            example_file_count: 0,
+            benchmark_file_count: 0,
+            complexity_score: 0.0,
+            documentation_coverage: 0.0,
+            direct_dependencies: 0,
+            total_dependencies: 0,
+            dev_dependencies: 0,
+            build_dependencies: 0,
+            dependency_data: members, // Store workspace members as dependency data
+            features: None,
+            targets: None,
+            has_build_script: project_path.join("build.rs").exists(),
+            build_script_complexity: 0,
+            download_count: None,
+            github_stars: None,
+            github_forks: None,
+            github_issues: None,
+            last_updated: None,
+            commit_count: None,
+            contributor_count: None,
+            project_age_days: None,
+            release_frequency: None,
+            processing_time_ms: 1, // Mock timing
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            extractor_version: self.extractor_version.clone(),
+            cargo_version: self.cargo_version.clone(),
+            rust_version: self.rust_version.clone(),
+        };
+        
+        Ok(vec![record])
+    }
+    
+    /// Extract metadata from a regular package Cargo.toml
+    fn extract_package_metadata(&mut self, project_path: &Path, package: &toml::Value) -> Result<Vec<CargoProjectRecord>> {
         // Extract basic metadata
         let project_name = package.get("name")
             .and_then(|v| v.as_str())
