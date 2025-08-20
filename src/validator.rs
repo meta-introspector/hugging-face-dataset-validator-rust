@@ -179,8 +179,8 @@ pub enum ValidationError {
     #[error("Cache error: {message}")]
     CacheError { message: String },
 
-    #[error("Network error: {message}")]
-    NetworkError { message: String },
+    //#[error("Network error: {message}")]
+    //NetworkError { message: String },
 
     #[error("Invalid input: {0}")]
     InvalidInput(String),
@@ -198,12 +198,12 @@ impl From<serde_json::Error> for ValidationError {
 }
 
 impl ValidationError {
-    pub fn is_retryable(&self) -> bool {
-        matches!(
-            self,
-            ValidationError::NetworkError { .. } | ValidationError::DataAccessError { .. }
-        )
-    }
+    // pub fn is_retryable(&self) -> bool {
+    //     matches!(
+    //         self,
+    //         ValidationError::NetworkError { .. } | ValidationError::DataAccessError { .. }
+    //     )
+    // }
 }
 
 // ============================================================================

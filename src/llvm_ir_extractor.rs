@@ -377,7 +377,7 @@ impl LLVMIRExtractor {
         // For now, create mock data to establish the schema
         
         let record = LLVMIRRecord {
-            id: format!("ir_gen:{}:{}", source_path.file_name().unwrap().to_string_lossy(), opt_level),
+            id: format!("ir_gen:{}:{}", source_path.to_string_lossy(), opt_level),
             source_file: source_path.to_string_lossy().to_string(),
             construct_name: "main".to_string(),
             phase: LLVMAnalysisPhase::IRGeneration.as_str().to_string(),
