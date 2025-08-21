@@ -6,7 +6,8 @@ use std::path::Path;
 // Import our unified validator types
 use crate::validator::{
     DataAccess, EntityIdentifier, ParquetMetadata, ValidationError, ValidationResult,
-    CachedResponse, ValidationLevel, DatasetValidator, 
+    CachedResponse, ValidationLevel,
+    //DatasetValidator, 
     validate_split, validate_config, validate_dataset
 };
 
@@ -79,19 +80,19 @@ impl SolfunmemeDataAccess {
     }
 
     /// Load a term from a specific character directory (more efficient if you know the character)
-    pub fn load_term_from_char(&self, term_id: &str, char_dir: &str) -> Result<IndexTerm, ValidationError> {
-        let term_path = format!("{}/terms/{}/{}.json", self.base_path, char_dir, term_id);
+    // pub fn load_term_from_char(&self, term_id: &str, char_dir: &str) -> Result<IndexTerm, ValidationError> {
+    //     let term_path = format!("{}/terms/{}/{}.json", self.base_path, char_dir, term_id);
         
-        let content = fs::read_to_string(&term_path)
-            .map_err(|e| ValidationError::DataAccessError {
-                message: format!("Failed to read term file {}: {}", term_path, e),
-            })?;
+    //     let content = fs::read_to_string(&term_path)
+    //         .map_err(|e| ValidationError::DataAccessError {
+    //             message: format!("Failed to read term file {}: {}", term_path, e),
+    //         })?;
         
-        serde_json::from_str(&content)
-            .map_err(|e| ValidationError::DataAccessError {
-                message: format!("Failed to parse term JSON: {}", e),
-            })
-    }
+    //     serde_json::from_str(&content)
+    //         .map_err(|e| ValidationError::DataAccessError {
+    //             message: format!("Failed to parse term JSON: {}", e),
+    //         })
+    // }
 
     /// Get all term IDs for a given first character
     fn get_term_ids_for_char(&self, first_char: char) -> Result<Vec<String>, ValidationError> {
@@ -397,14 +398,14 @@ impl DataAccess for SolfunmemeDataAccess {
 }
 
 /// Convenience function to create a validator for the solfunmeme dataset
-pub fn create_solfunmeme_validator(base_path: &str) -> Result<DatasetValidator<SolfunmemeDataAccess>, ValidationError> {
-    let data_access = SolfunmemeDataAccess::new(base_path);
+// pub fn create_solfunmeme_validator(base_path: &str) -> Result<DatasetValidator<SolfunmemeDataAccess>, ValidationError> {
+//     let data_access = SolfunmemeDataAccess::new(base_path);
     
-    // Perform health check
-    data_access.health_check()?;
+//     // Perform health check
+//     data_access.health_check()?;
     
-    Ok(DatasetValidator::new(data_access))
-}
+//     Ok(DatasetValidator::new(data_access))
+// }
 
 /// Example usage and testing function
 pub fn test_solfunmeme_dataset() -> Result<(), ValidationError> {

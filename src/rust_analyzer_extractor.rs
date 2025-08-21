@@ -471,7 +471,7 @@ impl RustAnalyzerExtractor {
     /// decompression speed, which is ideal for ML workloads.
     fn write_phase_to_parquet(&self, records: &[RustAnalyzerRecord], phase: &ProcessingPhase, output_dir: &Path) -> Result<()> {
         const MAX_FILE_SIZE_MB: usize = 9; // Stay under 10MB for Git LFS
-        const RECORDS_PER_BATCH: usize = 1000; // Process in batches to estimate size
+//        const RECORDS_PER_BATCH: usize = 1000; // Process in batches to estimate size
 
         let phase_dir = output_dir.join(format!("{}-phase", phase.as_str()));
         std::fs::create_dir_all(&phase_dir)?;

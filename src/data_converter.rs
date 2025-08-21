@@ -39,57 +39,57 @@ impl DataConverter {
     }
 
     /// Export all terms from a character group to JSON Lines format
-    pub fn export_character_to_jsonl(&self, character: &str, output_path: &str) -> Result<usize, ValidationError> {
-        let term_ids = self.data_access.get_split_names("solfunmeme-index", character)?;
+    // pub fn export_character_to_jsonl(&self, character: &str, output_path: &str) -> Result<usize, ValidationError> {
+    //     let term_ids = self.data_access.get_split_names("solfunmeme-index", character)?;
         
-        let mut file = File::create(output_path)
-            .map_err(|e| ValidationError::DataAccessError {
-                message: format!("Failed to create output file {}: {}", output_path, e),
-            })?;
+    //     let mut file = File::create(output_path)
+    //         .map_err(|e| ValidationError::DataAccessError {
+    //             message: format!("Failed to create output file {}: {}", output_path, e),
+    //         })?;
 
-        let mut exported_count = 0;
-        for term_id in term_ids {
-            match self.data_access.load_term(&term_id) {
-                Ok(term) => {
-                    let record = TermRecord {
-                        id: term_id.clone(),
-                        term: term.term,
-                        count: term.count,
-                        category: term.category,
-                        significance: term.significance,
-                        vibe: term.vibe,
-                        action_suggestion: term.action_suggestion,
-                        emoji_representation: term.emoji_representation,
-                        semantic_names: term.semantic_names,
-                        osi_layer: term.osi_layer,
-                        prime_factor: term.prime_factor,
-                        is_power_of_two: term.is_power_of_two,
-                        numerical_address: term.numerical_address,
-                        first_seen_timestamp: term.first_seen_timestamp,
-                        last_seen_timestamp: term.last_seen_timestamp,
-                        character_group: character.to_string(),
-                    };
+    //     let mut exported_count = 0;
+    //     for term_id in term_ids {
+    //         match self.data_access.load_term(&term_id) {
+    //             Ok(term) => {
+    //                 let record = TermRecord {
+    //                     id: term_id.clone(),
+    //                     term: term.term,
+    //                     count: term.count,
+    //                     category: term.category,
+    //                     significance: term.significance,
+    //                     vibe: term.vibe,
+    //                     action_suggestion: term.action_suggestion,
+    //                     emoji_representation: term.emoji_representation,
+    //                     semantic_names: term.semantic_names,
+    //                     osi_layer: term.osi_layer,
+    //                     prime_factor: term.prime_factor,
+    //                     is_power_of_two: term.is_power_of_two,
+    //                     numerical_address: term.numerical_address,
+    //                     first_seen_timestamp: term.first_seen_timestamp,
+    //                     last_seen_timestamp: term.last_seen_timestamp,
+    //                     character_group: character.to_string(),
+    //                 };
 
-                    let json_line = serde_json::to_string(&record)
-                        .map_err(|e| ValidationError::DataAccessError {
-                            message: format!("Failed to serialize term {}: {}", term_id, e),
-                        })?;
+    //                 let json_line = serde_json::to_string(&record)
+    //                     .map_err(|e| ValidationError::DataAccessError {
+    //                         message: format!("Failed to serialize term {}: {}", term_id, e),
+    //                     })?;
                     
-                    writeln!(file, "{}", json_line)
-                        .map_err(|e| ValidationError::DataAccessError {
-                            message: format!("Failed to write to output file: {}", e),
-                        })?;
+    //                 writeln!(file, "{}", json_line)
+    //                     .map_err(|e| ValidationError::DataAccessError {
+    //                         message: format!("Failed to write to output file: {}", e),
+    //                     })?;
                     
-                    exported_count += 1;
-                }
-                Err(e) => {
-                    eprintln!("Warning: Failed to load term {}: {}", term_id, e);
-                }
-            }
-        }
+    //                 exported_count += 1;
+    //             }
+    //             Err(e) => {
+    //                 eprintln!("Warning: Failed to load term {}: {}", term_id, e);
+    //             }
+    //         }
+    //     }
 
-        Ok(exported_count)
-    }
+    //     Ok(exported_count)
+    // }
 
     /// Export all terms to a single JSON Lines file
     pub fn export_all_to_jsonl(&self, output_path: &str) -> Result<usize, ValidationError> {

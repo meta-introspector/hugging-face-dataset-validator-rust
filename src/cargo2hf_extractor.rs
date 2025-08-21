@@ -590,7 +590,7 @@ impl Cargo2HfExtractor {
         phase: &CargoExtractionPhase,
         output_dir: &Path,
     ) -> Result<()> {
-        const MAX_FILE_SIZE_MB: usize = 9;
+//        const MAX_FILE_SIZE_MB: usize = 9;
         
         let phase_dir = output_dir.join(format!("{}-phase", phase.as_str()));
         std::fs::create_dir_all(&phase_dir)?;

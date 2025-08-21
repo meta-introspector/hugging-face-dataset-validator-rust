@@ -44,13 +44,21 @@
 //! - **Existing extractors**: Complement rust-analyzer semantic analysis
 //! - **Performance tools**: Correlate with actual execution performance
 
-use anyhow::{Context, Result};
+use anyhow::{
+    //Context,
+    Result};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+//use std::collections::HashMap;
+use std::path::{Path
+		//,		PathBuf
+};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use arrow::array::{StringArray, UInt32Array, UInt64Array, Float32Array, BooleanArray};
+use arrow::array::{StringArray, UInt32Array,
+		   //UInt64Array,
+		   //Float32Array,
+		   //BooleanArray
+};
 use arrow::datatypes::{DataType, Field, Schema};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
