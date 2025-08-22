@@ -39,9 +39,9 @@ impl ValidationResult {
         self.statistics |= other.statistics;
     }
 
-    pub fn has_any_capability(&self) -> bool {
-        self.viewer || self.preview || self.search || self.filter || self.statistics
-    }
+    // pub fn has_any_capability(&self) -> bool {
+    //     self.viewer || self.preview || self.search || self.filter || self.statistics
+    // }
 
     pub fn capability_count(&self) -> usize {
         [self.viewer, self.preview, self.search, self.filter, self.statistics]
