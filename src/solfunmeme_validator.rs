@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::validator::{
     DataAccess, EntityIdentifier, ParquetMetadata, ValidationError, ValidationResult,
     CachedResponse, ValidationLevel,
-    //DatasetValidator, 
+    DatasetValidator, 
     validate_split, validate_config, validate_dataset
 };
 
@@ -398,14 +398,14 @@ impl DataAccess for SolfunmemeDataAccess {
 }
 
 /// Convenience function to create a validator for the solfunmeme dataset
-// pub fn create_solfunmeme_validator(base_path: &str) -> Result<DatasetValidator<SolfunmemeDataAccess>, ValidationError> {
-//     let data_access = SolfunmemeDataAccess::new(base_path);
+pub fn create_solfunmeme_validator(base_path: &str) -> Result<DatasetValidator<SolfunmemeDataAccess>, ValidationError> {
+    let data_access = SolfunmemeDataAccess::new(base_path);
     
-//     // Perform health check
-//     data_access.health_check()?;
+    // Perform health check
+    data_access.health_check()?;
     
-//     Ok(DatasetValidator::new(data_access))
-// }
+    Ok(DatasetValidator::new(data_access))
+}
 
 /// Example usage and testing function
 pub fn test_solfunmeme_dataset() -> Result<(), ValidationError> {
