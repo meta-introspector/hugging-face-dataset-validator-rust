@@ -51,6 +51,9 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use cargo_metadata;
+use reqwest;
+
 
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -288,14 +291,30 @@ impl Cargo2HfExtractor {
     
     /// Get the current Cargo version
     fn get_cargo_version() -> Result<String> {
-        // TODO: Execute `cargo --version` and parse output
-        Ok("1.86.0".to_string())
+        let output = std::process::Command::new("cargo")
+            .arg("--version")
+            .output()
+            .context("Failed to execute `cargo --version`")?;
+        let version_str = String::from_utf8(output.stdout)
+            .context("Failed to parse cargo version output as UTF-8")?;
+        let version = version_str.split(' ').nth(1)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse cargo version from: {}", version_str))?
+            .to_string();
+        Ok(version)
     }
     
     /// Get the current Rust version
     fn get_rust_version() -> Result<String> {
-        // TODO: Execute `rustc --version` and parse output
-        Ok("1.86.0".to_string())
+        let output = std::process::Command::new("rustc")
+            .arg("--version")
+            .output()
+            .context("Failed to execute `rustc --version`")?;
+        let version_str = String::from_utf8(output.stdout)
+            .context("Failed to parse rustc version output as UTF-8")?;
+        let version = version_str.split(' ').nth(1)
+            .ok_or_else(|| anyhow::anyhow!("Failed to parse rustc version from: {}", version_str))?
+            .to_string();
+        Ok(version)
     }
     
     /// Process a Cargo project and generate HuggingFace dataset
@@ -319,7 +338,7 @@ impl Cargo2HfExtractor {
     /// - **BuildAnalysis**: Build scripts and configuration
     /// - **EcosystemAnalysis**: Crates.io and GitHub metadata
     /// - **VersionHistory**: Git history and development patterns
-    pub fn extract_project_to_parquet(
+    pub async fn extract_project_to_parquet(
         &mut self,
         project_path: &Path,
         phases: &[CargoExtractionPhase],
@@ -340,7 +359,7 @@ impl Cargo2HfExtractor {
         // Process each phase
         for phase in phases {
             println!("Processing phase: {:?}", phase);
-            let phase_records = self.extract_phase_data(project_path, phase, include_dependencies)?;
+            let phase_records = self.extract_phase_data(project_path, phase, include_dependencies).await?;
             println!("Generated {} records for phase {:?}", phase_records.len(), phase);
             
             // Write to Parquet files
@@ -351,7 +370,7 @@ impl Cargo2HfExtractor {
     }
     
     /// Extract data for a specific extraction phase
-    fn extract_phase_data(
+    async fn extract_phase_data(
         &mut self,
         project_path: &Path,
         phase: &CargoExtractionPhase,
@@ -371,7 +390,7 @@ impl Cargo2HfExtractor {
                 self.extract_build_analysis(project_path)
             }
             CargoExtractionPhase::EcosystemAnalysis => {
-                self.extract_ecosystem_analysis(project_path)
+                self.extract_ecosystem_analysis(project_path).await
             }
             CargoExtractionPhase::VersionHistory => {
                 self.extract_version_history(project_path)
@@ -552,29 +571,417 @@ impl Cargo2HfExtractor {
     }
     
     /// Placeholder implementations for other phases
-    /// TODO: Implement comprehensive dependency analysis
-    fn extract_dependency_analysis(&mut self, _project_path: &Path, _include_deps: bool) -> Result<Vec<CargoProjectRecord>> {
-        Ok(Vec::new())
+    /// Implement comprehensive dependency analysis
+    fn extract_dependency_analysis(&mut self, project_path: &Path, include_dependencies: bool) -> Result<Vec<CargoProjectRecord>> {
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(project_path.join("Cargo.toml"))
+            .exec()
+            .context("Failed to execute cargo metadata")?;
+
+        let mut records = Vec::new();
+
+        for package in &metadata.packages {
+            let mut direct_dependencies = 0;
+            let mut dev_dependencies = 0;
+            let mut build_dependencies = 0;
+            let mut dependency_data_vec = Vec::new();
+
+            for dep in &package.dependencies {
+                direct_dependencies += 1;
+                if dep.kind == cargo_metadata::DependencyKind::Development {
+                    dev_dependencies += 1;
+                }
+                if dep.kind == cargo_metadata::DependencyKind::Build {
+                    build_dependencies += 1;
+                }
+
+                let resolved_version = metadata.resolve.as_ref().and_then(|resolve| {
+                    resolve.nodes.iter().find(|node| node.id == package.id).and_then(|node| {
+                        node.dependencies.iter().find(|node_dep_id| {
+                            metadata.packages.iter().find(|p| p.id == **node_dep_id).map_or(false, |p| p.name == dep.name)
+                        }).and_then(|resolved_id| {
+                            metadata.packages.iter().find(|p| &p.id == resolved_id).map(|p| p.version.to_string())
+                        })
+                    })
+                });
+
+                dependency_data_vec.push(DependencyInfo {
+                    name: dep.name.clone(),
+                    version_req: dep.req.to_string(),
+                    resolved_version,
+                    optional: dep.optional,
+                    default_features: dep.uses_default_features,
+                    features: dep.features.clone(),
+                    source: dep.source.as_ref().map_or("path".to_string(), |s| s.to_string()),
+                    is_dev: dep.kind == cargo_metadata::DependencyKind::Development,
+                    is_build: dep.kind == cargo_metadata::DependencyKind::Build,
+                });
+            }
+
+            let total_dependencies = metadata.resolve.as_ref().map_or(0, |resolve| {
+                resolve.nodes.iter().find(|node| node.id == package.id).map_or(0, |node| {
+                    node.dependencies.len() as u32
+                })
+            });
+
+            let record = CargoProjectRecord {
+                id: format!("{}:{}:dependency_analysis", package.name, package.version),
+                project_path: package.manifest_path.parent().unwrap().to_string(),
+                project_name: package.name.clone(),
+                project_version: package.version.to_string(),
+                phase: CargoExtractionPhase::DependencyAnalysis.as_str().to_string(),
+                processing_order: self.next_processing_order(),
+                description: package.description.clone(),
+                authors: Some(serde_json::to_string(&package.authors).unwrap_or_default()),
+                license: package.license.clone(),
+                repository: package.repository.clone(),
+                homepage: package.homepage.clone(),
+                documentation: package.documentation.clone(),
+                keywords: Some(serde_json::to_string(&package.keywords).unwrap_or_default()),
+                categories: Some(serde_json::to_string(&package.categories).unwrap_or_default()),
+                lines_of_code: 0, // To be filled by SourceCodeAnalysis
+                source_file_count: 0, // To be filled by SourceCodeAnalysis
+                test_file_count: 0, // To be filled by SourceCodeAnalysis
+                example_file_count: 0, // To be filled by SourceCodeAnalysis
+                benchmark_file_count: 0, // To be filled by SourceCodeAnalysis
+                complexity_score: 0.0, // To be filled by SourceCodeAnalysis
+                documentation_coverage: 0.0, // To be filled by SourceCodeAnalysis
+                direct_dependencies,
+                total_dependencies,
+                dev_dependencies,
+                build_dependencies,
+                dependency_data: Some(serde_json::to_string(&dependency_data_vec)?),
+                features: Some(serde_json::to_string(&package.features)?),
+                targets: Some(serde_json::to_string(&package.targets)?),
+                has_build_script: package.targets.iter().any(|t| t.kind.iter().any(|k| k == "custom-build")),
+                build_script_complexity: 0, // To be filled by BuildAnalysis
+                download_count: None, // To be filled by EcosystemAnalysis
+                github_stars: None, // To be filled by EcosystemAnalysis
+                github_forks: None, // To be filled by EcosystemAnalysis
+                github_issues: None, // To be filled by EcosystemAnalysis
+                last_updated: None, // To be filled by EcosystemAnalysis
+                commit_count: None, // To be filled by VersionHistory
+                contributor_count: None, // To be filled by VersionHistory
+                project_age_days: None, // To be filled by VersionHistory
+                release_frequency: None, // To be filled by VersionHistory
+                processing_time_ms: 1, // Mock timing
+                timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+                extractor_version: self.extractor_version.clone(),
+                cargo_version: self.cargo_version.clone(),
+                rust_version: self.rust_version.clone(),
+            };
+            records.push(record);
+        }
+
+        Ok(records)
     }
     
-    /// TODO: Implement source code analysis with metrics
-    fn extract_source_code_analysis(&mut self, _project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
-        Ok(Vec::new())
+    /// Implement source code analysis with metrics
+    fn extract_source_code_analysis(&mut self, project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
+        use walkdir::WalkDir;
+        let mut lines_of_code = 0;
+        let mut source_file_count = 0;
+        let mut test_file_count = 0;
+        let mut example_file_count = 0;
+        let mut benchmark_file_count = 0;
+
+        for entry in WalkDir::new(project_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path();
+            if path.is_file() && path.extension().map_or(false, |ext| ext == "rs") {
+                let content = std::fs::read_to_string(path)?;
+                lines_of_code += content.lines().count() as u32;
+                source_file_count += 1;
+
+                if path.to_string_lossy().contains("/tests/") {
+                    test_file_count += 1;
+                } else if path.to_string_lossy().contains("/examples/") {
+                    example_file_count += 1;
+                } else if path.to_string_lossy().contains("/benches/") {
+                    benchmark_file_count += 1;
+                }
+            }
+        }
+
+        let record = CargoProjectRecord {
+            id: format!("{}:source_code_analysis", project_path.file_name().unwrap().to_string_lossy()),
+            project_path: project_path.to_string_lossy().to_string(),
+            project_name: project_path.file_name().unwrap().to_string_lossy().to_string(),
+            project_version: "unknown".to_string(), // This phase doesn't extract version
+            phase: CargoExtractionPhase::SourceCodeAnalysis.as_str().to_string(),
+            processing_order: self.next_processing_order(),
+            description: None,
+            authors: None,
+            license: None,
+            repository: None,
+            homepage: None,
+            documentation: None,
+            keywords: None,
+            categories: None,
+            lines_of_code,
+            source_file_count,
+            test_file_count,
+            example_file_count,
+            benchmark_file_count,
+            complexity_score: 0.0, // TODO: Implement actual complexity analysis
+            documentation_coverage: 0.0, // TODO: Implement actual documentation coverage
+            direct_dependencies: 0, // To be filled by DependencyAnalysis
+            total_dependencies: 0, // To be filled by DependencyAnalysis
+            dev_dependencies: 0, // To be filled by DependencyAnalysis
+            build_dependencies: 0, // To be filled by DependencyAnalysis
+            dependency_data: None, // To be filled by DependencyAnalysis
+            features: None, // To be filled by BuildAnalysis
+            targets: None, // To be filled by BuildAnalysis
+            has_build_script: project_path.join("build.rs").exists(),
+            build_script_complexity: 0, // To be filled by BuildAnalysis
+            download_count: None, // To be filled by EcosystemAnalysis
+            github_stars: None, // To be filled by EcosystemAnalysis
+            github_forks: None, // To be filled by EcosystemAnalysis
+            github_issues: None, // To be filled by EcosystemAnalysis
+            last_updated: None, // To be filled by EcosystemAnalysis
+            commit_count: None, // To be filled by VersionHistory
+            contributor_count: None, // To be filled by VersionHistory
+            project_age_days: None, // To be filled by VersionHistory
+            release_frequency: None, // To be filled by VersionHistory
+            processing_time_ms: 1, // Mock timing
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            extractor_version: self.extractor_version.clone(),
+            cargo_version: self.cargo_version.clone(),
+            rust_version: self.rust_version.clone(),
+        };
+
+        Ok(vec![record])
     }
     
-    /// TODO: Implement build configuration analysis
-    fn extract_build_analysis(&mut self, _project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
-        Ok(Vec::new())
+    /// Implement build configuration analysis
+    fn extract_build_analysis(&mut self, project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
+        let cargo_toml_path = project_path.join("Cargo.toml");
+        let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+            .with_context(|| format!("Failed to read Cargo.toml: {}", cargo_toml_path.display()))?;
+        let cargo_toml: toml::Value = toml::from_str(&cargo_toml_content)
+            .with_context(|| "Failed to parse Cargo.toml")?;
+
+        let has_build_script = project_path.join("build.rs").exists();
+        let build_script_complexity = if has_build_script {
+            std::fs::read_to_string(project_path.join("build.rs"))?.lines().count() as u32
+        } else {
+            0
+        };
+
+        let features = cargo_toml.get("features")
+            .and_then(|v| v.as_table())
+            .map(|table| serde_json::to_string(table).unwrap_or_default());
+
+        let targets = cargo_toml.get("lib") // Check for lib target
+            .or_else(|| cargo_toml.get("bin")) // Check for bin target
+            .and_then(|v| v.as_table())
+            .map(|table| serde_json::to_string(table).unwrap_or_default());
+
+
+        let record = CargoProjectRecord {
+            id: format!("{}:build_analysis", project_path.file_name().unwrap().to_string_lossy()),
+            project_path: project_path.to_string_lossy().to_string(),
+            project_name: project_path.file_name().unwrap().to_string_lossy().to_string(),
+            project_version: "unknown".to_string(), // This phase doesn't extract version
+            phase: CargoExtractionPhase::BuildAnalysis.as_str().to_string(),
+            processing_order: self.next_processing_order(),
+            description: None,
+            authors: None,
+            license: None,
+            repository: None,
+            homepage: None,
+            documentation: None,
+            keywords: None,
+            categories: None,
+            lines_of_code: 0, // To be filled by SourceCodeAnalysis
+            source_file_count: 0, // To be filled by SourceCodeAnalysis
+            test_file_count: 0, // To be filled by SourceCodeAnalysis
+            example_file_count: 0, // To be filled by SourceCodeAnalysis
+            benchmark_file_count: 0, // To be filled by SourceCodeAnalysis
+            complexity_score: 0.0, // To be filled by SourceCodeAnalysis
+            documentation_coverage: 0.0, // To be filled by SourceCodeAnalysis
+            direct_dependencies: 0, // To be filled by DependencyAnalysis
+            total_dependencies: 0, // To be filled by DependencyAnalysis
+            dev_dependencies: 0, // To be filled by DependencyAnalysis
+            build_dependencies: 0, // To be filled by DependencyAnalysis
+            dependency_data: None, // To be filled by DependencyAnalysis
+            features,
+            targets,
+            has_build_script,
+            build_script_complexity,
+            download_count: None, // To be filled by EcosystemAnalysis
+            github_stars: None, // To be filled by EcosystemAnalysis
+            github_forks: None, // To be filled by EcosystemAnalysis
+            github_issues: None, // To be filled by EcosystemAnalysis
+            last_updated: None, // To be filled by EcosystemAnalysis
+            commit_count: None, // To be filled by VersionHistory
+            contributor_count: None, // To be filled by VersionHistory
+            project_age_days: None, // To be filled by VersionHistory
+            release_frequency: None, // To be filled by VersionHistory
+            processing_time_ms: 1, // Mock timing
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            extractor_version: self.extractor_version.clone(),
+            cargo_version: self.cargo_version.clone(),
+            rust_version: self.rust_version.clone(),
+        };
+
+        Ok(vec![record])
     }
     
-    /// TODO: Implement ecosystem metadata extraction
-    fn extract_ecosystem_analysis(&mut self, _project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
-        Ok(Vec::new())
+    /// Implement ecosystem metadata extraction
+    async fn extract_ecosystem_analysis(&mut self, project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
+        let cargo_toml_path = project_path.join("Cargo.toml");
+        let cargo_toml_content = std::fs::read_to_string(&cargo_toml_path)
+            .with_context(|| format!("Failed to read Cargo.toml: {}", cargo_toml_path.display()))?;
+        let cargo_toml: toml::Value = toml::from_str(&cargo_toml_content)
+            .with_context(|| "Failed to parse Cargo.toml")?;
+
+        let package_name = cargo_toml.get("package")
+            .and_then(|p| p.get("name"))
+            .and_then(|n| n.as_str())
+            .unwrap_or_default()
+            .to_string();
+
+        let mut record = CargoProjectRecord {
+            id: format!("{}:ecosystem_analysis", package_name),
+            project_path: project_path.to_string_lossy().to_string(),
+            project_name: package_name.clone(),
+            project_version: cargo_toml.get("package")
+                .and_then(|p| p.get("version"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string(),
+            phase: CargoExtractionPhase::EcosystemAnalysis.as_str().to_string(),
+            processing_order: self.next_processing_order(),
+            description: None, authors: None, license: None, repository: None, homepage: None,
+            documentation: None, keywords: None, categories: None, lines_of_code: 0,
+            source_file_count: 0, test_file_count: 0, example_file_count: 0,
+            benchmark_file_count: 0, complexity_score: 0.0, documentation_coverage: 0.0,
+            direct_dependencies: 0, total_dependencies: 0, dev_dependencies: 0,
+            build_dependencies: 0, dependency_data: None, features: None, targets: None,
+            has_build_script: false, build_script_complexity: 0,
+            download_count: None, github_stars: None, github_forks: None,
+            github_issues: None, last_updated: None, commit_count: None,
+            contributor_count: None, project_age_days: None, release_frequency: None,
+            processing_time_ms: 1,
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            extractor_version: self.extractor_version.clone(),
+            cargo_version: self.cargo_version.clone(),
+            rust_version: self.rust_version.clone(),
+        };
+
+        // Fetch from crates.io
+        let client = reqwest::Client::new();
+        let crate_url = format!("https://crates.io/api/v1/crates/{}", package_name);
+        if let Ok(response) = client.get(&crate_url).send().await {
+            if response.status().is_success() {
+                let json: serde_json::Value = response.json().await?;
+                if let Some(krate) = json.get("crate") {
+                    record.download_count = krate.get("downloads").and_then(|d| d.as_u64());
+                }
+            }
+        }
+
+        // Fetch from GitHub
+        if let Some(repo_url) = cargo_toml.get("package")
+            .and_then(|p| p.get("repository"))
+            .and_then(|r| r.as_str())
+        {
+            if repo_url.contains("github.com") {
+                let parts: Vec<&str> = repo_url.trim_end_matches('/').split('/').collect();
+                if parts.len() >= 2 {
+                    let owner = parts[parts.len() - 2];
+                    let repo = parts[parts.len() - 1].trim_end_matches(".git");
+                    let github_api_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+
+                    // GitHub API requires a User-Agent header
+                    let client = reqwest::Client::builder()
+                        .user_agent("cargo2hf-extractor")
+                        .build()?;
+
+                    if let Ok(response) = client.get(&github_api_url).send().await {
+                        if response.status().is_success() {
+                            let json: serde_json::Value = response.json().await?;
+                            record.github_stars = json.get("stargazers_count").and_then(|s| s.as_u64()).map(|s| s as u32);
+                            record.github_forks = json.get("forks_count").and_then(|f| f.as_u64()).map(|f| f as u32);
+                            record.github_issues = json.get("open_issues_count").and_then(|i| i.as_u64()).map(|i| i as u32);
+                            if let Some(updated_at) = json.get("updated_at").and_then(|u| u.as_str()) {
+                                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(updated_at) {
+                                    record.last_updated = Some(dt.timestamp() as u64);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(vec![record])
     }
     
-    /// TODO: Implement version history analysis
-    fn extract_version_history(&mut self, _project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
-        Ok(Vec::new())
+    /// Implement version history analysis
+    fn extract_version_history(&mut self, project_path: &Path) -> Result<Vec<CargoProjectRecord>> {
+        let repo = git2::Repository::open(project_path)
+            .context("Failed to open git repository")?;
+
+        let mut commit_count = 0;
+        let mut contributors = std::collections::HashSet::new();
+        let mut first_commit_time: Option<chrono::DateTime<chrono::Utc>> = None;
+
+        let mut revwalk = repo.revwalk()?;
+        revwalk.push_head()?;
+
+        for commit_id in revwalk {
+            let commit_id = commit_id?;
+            let commit = repo.find_commit(commit_id)?;
+            commit_count += 1;
+            contributors.insert(commit.author().name().unwrap_or("unknown").to_string());
+
+            let commit_time = chrono::DateTime::from_timestamp(commit.time().seconds(), 0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid commit timestamp"))?;
+            if first_commit_time.is_none() || commit_time < first_commit_time.unwrap() {
+                first_commit_time = Some(commit_time);
+            }
+        }
+
+        let project_age_days = if let Some(first_time) = first_commit_time {
+            let now = chrono::Utc::now();
+            let duration = now.signed_duration_since(first_time);
+            Some(duration.num_days() as u32)
+        } else {
+            None
+        };
+
+        let record = CargoProjectRecord {
+            id: format!("{}:version_history", project_path.file_name().unwrap().to_string_lossy()),
+            project_path: project_path.to_string_lossy().to_string(),
+            project_name: project_path.file_name().unwrap().to_string_lossy().to_string(),
+            project_version: "unknown".to_string(), // This phase doesn't extract version
+            phase: CargoExtractionPhase::VersionHistory.as_str().to_string(),
+            processing_order: self.next_processing_order(),
+            description: None, authors: None, license: None, repository: None, homepage: None,
+            documentation: None, keywords: None, categories: None, lines_of_code: 0,
+            source_file_count: 0, test_file_count: 0, example_file_count: 0,
+            benchmark_file_count: 0, complexity_score: 0.0, documentation_coverage: 0.0,
+            direct_dependencies: 0, total_dependencies: 0, dev_dependencies: 0,
+            build_dependencies: 0, dependency_data: None, features: None, targets: None,
+            has_build_script: false, build_script_complexity: 0,
+            download_count: None, github_stars: None, github_forks: None,
+            github_issues: None, last_updated: None,
+            commit_count: Some(commit_count as u32),
+            contributor_count: Some(contributors.len() as u32),
+            project_age_days,
+            release_frequency: None, // TODO: Implement more sophisticated release frequency
+            processing_time_ms: 1, // Mock timing
+            timestamp: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+            extractor_version: self.extractor_version.clone(),
+            cargo_version: self.cargo_version.clone(),
+            rust_version: self.rust_version.clone(),
+        };
+
+        Ok(vec![record])
     }
     
     /// Generate next processing order number

@@ -16,13 +16,8 @@ use rust_analyzer_extractor::{RustAnalyzerExtractor, ProcessingPhase};
 use std::env;
 use std::path::Path;
 
-fn main() -> Result<(), ValidationError> {
-    // Use tokio runtime for async operations
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    rt.block_on(async_main())
-}
-
-async fn async_main() -> Result<(), ValidationError> {
+#[tokio::main]
+async fn main() -> Result<(), ValidationError> {
     println!("🚀 Hugging Face Dataset Validator - Rust Implementation");
     println!("======================================================\n");
 
@@ -104,13 +99,13 @@ async fn async_main() -> Result<(), ValidationError> {
             let project_path = args.get(2).ok_or_else(|| ValidationError::InvalidInput("Cargo project path required".to_string()))?;
             let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("cargo2hf-dataset");
             let include_deps = args.get(4).map(|s| s == "true").unwrap_or(false);
-            analyze_cargo_project(project_path, output_path, include_deps)?;
+            analyze_cargo_project(project_path, output_path, include_deps).await?;
         }
         Some("analyze-cargo-ecosystem") => {
             println!("Analyzing Cargo ecosystem (project + dependencies)...\n");
             let project_path = args.get(2).ok_or_else(|| ValidationError::InvalidInput("Cargo project path required".to_string()))?;
             let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("cargo-ecosystem-dataset");
-            analyze_cargo_project(project_path, output_path, true)?; // Include dependencies
+            analyze_cargo_project(project_path, output_path, true).await?; // Include dependencies
         }
         Some("validate-cargo-dataset") => {
             println!("Validating cargo2hf generated dataset...\n");
@@ -128,7 +123,7 @@ async fn async_main() -> Result<(), ValidationError> {
             println!("Comprehensive Rust → LLVM IR analysis...\n");
             let source_path = args.get(2).ok_or_else(|| ValidationError::InvalidInput("Source path required".to_string()))?;
             let output_path = args.get(3).map(|s| s.as_str()).unwrap_or("rust-to-ir-dataset");
-            analyze_rust_to_ir_pipeline(source_path, output_path)?;
+            analyze_rust_to_ir_pipeline(source_path, output_path).await?;
         }
         Some("validate-llvm-dataset") => {
             println!("Validating LLVM IR analysis dataset...\n");
@@ -876,7 +871,7 @@ target/
 /// This function uses the cargo2hf extractor to analyze a Cargo project
 /// and generate comprehensive datasets including project metadata,
 /// dependency analysis, source code metrics, and ecosystem information.
-fn analyze_cargo_project(project_path: &str, output_path: &str, include_dependencies: bool) -> Result<(), ValidationError> {
+async fn analyze_cargo_project(project_path: &str, output_path: &str, include_dependencies: bool) -> Result<(), ValidationError> {
     use cargo2hf_extractor::{Cargo2HfExtractor, CargoExtractionPhase};
     
     let project_path = Path::new(project_path);
@@ -912,7 +907,7 @@ fn analyze_cargo_project(project_path: &str, output_path: &str, include_dependen
     
     // Extract project data
     extractor.extract_project_to_parquet(project_path, &phases, output_path, include_dependencies)
-        .map_err(|e| ValidationError::ProcessingError(format!("Extraction failed: {}", e)))?;
+        .await.map_err(|e| ValidationError::ProcessingError(format!("Extraction failed: {}", e)))?;
     
     println!("✅ Cargo project analysis complete!");
     println!("📁 Dataset files written to: {}", output_path.display());
@@ -1185,7 +1180,7 @@ fn analyze_llvm_ir(source_path: &str, output_path: &str, opt_levels_str: &str) -
 /// 
 /// This function performs a complete analysis of the Rust compilation pipeline,
 /// combining semantic analysis, project analysis, and LLVM IR generation.
-fn analyze_rust_to_ir_pipeline(source_path: &str, output_path: &str) -> Result<(), ValidationError> {
+async fn analyze_rust_to_ir_pipeline(source_path: &str, output_path: &str) -> Result<(), ValidationError> {
     let source_path = Path::new(source_path);
     let output_path = Path::new(output_path);
     
@@ -1202,7 +1197,7 @@ fn analyze_rust_to_ir_pipeline(source_path: &str, output_path: &str) -> Result<(
     // Phase 2: Cargo project analysis
     println!("\n🏗️ Phase 2: Cargo Project Analysis");
     let cargo_output = output_path.join("cargo");
-    analyze_cargo_project(source_path.to_str().unwrap(), cargo_output.to_str().unwrap(), false)?;
+    analyze_cargo_project(source_path.to_str().unwrap(), cargo_output.to_str().unwrap(), false).await?;
     
     // Phase 3: LLVM IR analysis
     println!("\n⚡ Phase 3: LLVM IR Analysis");
